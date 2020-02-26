@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from itertools import compress
 from astropy.io import fits
 import pandas as pd
+import astropy.time as atime
+import h5py
 
 from .utils import fit_continuum
 
@@ -633,53 +635,100 @@ class Spectrum(object):
             self.transform_log()  
             self.continuum_normalize()
             self.mask_high_pixels()
-            
     def from_HIRES(self, filename, process=True):
         """
         Takes a HIRES blue chip spectrum file; reads data from it + red + I
         counterparts.
         Note: these files must all be located in the same directory.
-        Currently this function does NOT support calculating barycentric shifts 
-        from the observation dates. 
+        Currently this function does NOT support calculating barycentric shifts
+        from the observation dates.
         For best performance, you should set the 'bervs' attribute to approximate
         values before analyzing these data.
-        
+
         Parameters
         ----------
         filename : string
             Location of the blue chip spectrum to be read.
         process : bool, optional (default `True`)
-            If `True`, do some data processing, including masking of low-SNR 
-            regions and strong outliers; continuum normalization; and 
+            If `True`, do some data processing, including masking of low-SNR
+            regions and strong outliers; continuum normalization; and
             transformation to ln(wavelength) and ln(flux).
         """
         if not self.empty:
             print("WARNING: overwriting existing contents.")
-        R = 23 + 16 + 10 # orders (b + r + i)
+        R = 23 + 16 + 10  # orders (b + r + i)
         metadata = {}
         metadata['filelist'] = filename
-        with fits.open(filename) as sp: # load up blue chip
-            metadata['dates'] = float(sp[0].header['MJD']) + 2450000.5       
-            metadata['airms'] = sp[0].header['AIRMASS']       
-            #TODO: needs BERVs!!!
+        with fits.open(filename) as sp:  # load up blue chip
+            metadata['dates'] = float(sp[0].header['MJD']) + 2450000.5
+            metadata['airms'] = sp[0].header['AIRMASS']
+            # TODO: needs BERVs!!!
             spec = np.copy(sp[0].data)
             errs = np.copy(sp[1].data)
             waves = np.copy(sp[2].data)
         other_files = [filename.replace('_b', '_r'), filename.replace('_b', '_i')]
-        for f in other_files: # load up red + iodine chips
+        for f in other_files:  # load up red + iodine chips
             with fits.open(f) as sp:
                 spec = np.concatenate((spec, sp[0].data))
                 errs = np.concatenate((errs, sp[1].data))
-                waves = np.concatenate((waves, sp[2].data))        
+                waves = np.concatenate((waves, sp[2].data))
         xs = [waves[r] for r in range(R)]
         ys = [spec[r] for r in range(R)]
-        ivars = [1./errs[r]**2 for r in range(R)]
+        ivars = [1. / errs[r] ** 2 for r in range(R)]
         self.populate(xs, ys, ivars, **metadata)
         if process:
             self.mask_low_pixels()
-            self.mask_bad_edges()  
-            self.transform_log()  
+            self.mask_bad_edges()
+            self.transform_log()
             self.continuum_normalize()
-            self.mask_high_pixels()     
-        
-        
+            self.mask_high_pixels()
+
+    def from_MAROON_X(self, filename, fiber, process=True):
+        """
+        Takes a MAROON-X optimally extracted file; reads metadata and associated
+        spectrum + wavelength files.
+        Note: these files must all be located in the same directory.
+
+        Parameters
+        ----------
+        filename : string
+            Location of the extracted file to be read.
+        process : bool, optional (default `True`)
+            If `True`, do some data processing, including masking of low-SNR
+            regions and strong outliers; continuum normalization; and
+            transformation to ln(wavelength) and ln(flux).
+        """
+        if not self.empty:
+            print("WARNING: overwriting existing contents.")
+        R = 32
+
+        metadata = {}
+        fibername = 'fiber_{0}'.format(fiber)
+        metadata['filelist'] = filename
+        #metadata['fiber'] = fiber
+
+        with h5py.File(filename, 'r') as sp:
+            time = sp.attrs['utc_fluxweighted']
+            tval = atime.Time(time[1:])
+            metadata['dates'] = tval.mjd
+            metadata['airms'] = float(sp['header'].attrs['MAROONX TELESCOPE AIRMASS'])
+            metadata['bervs'] = float(sp.attrs['bc_fluxweighted'])
+
+            order_zero = 91
+            xs = np.zeros((R, 3954))
+            ys = np.zeros_like(xs)
+            ivars = np.zeros_like(xs)
+            for r in range(R):
+                order = str(order_zero + r)
+                xs[r] = np.array(sp['wavelength_solution'][fibername][order])
+                ys[r] = np.array(sp['optimal_extraction'][fibername][order])
+                ivars[r] = 1. / np.array(sp['optimal_var'][fibername][order])
+
+        self.populate(xs, ys, ivars, **metadata)
+        if process:
+            self.mask_low_pixels()
+            self.mask_bad_edges()
+            self.transform_log()
+            self.continuum_normalize()
+            self.mask_high_pixels()
+
