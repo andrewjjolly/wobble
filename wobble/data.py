@@ -689,7 +689,7 @@ class Spectrum(object):
             self.continuum_normalize()
             self.mask_high_pixels()
 
-    def from_MAROON_X(self, filename, fiber, process=True):
+    def from_MAROON_X(self, filename_b, filename_r, fiber, process=True):
         """
         Takes a MAROON-X optimally extracted file; reads metadata and associated
         spectrum + wavelength files.
@@ -705,14 +705,15 @@ class Spectrum(object):
         """
         if not self.empty:
             print("WARNING: overwriting existing contents.")
+        # start with the blue observation
         R = 32
 
         metadata = {}
         fibername = 'fiber_{0}'.format(fiber)
-        metadata['filelist'] = filename
+        metadata['filelist'] = filename_b
         # metadata['fiber'] = fiber
 
-        with h5py.File(filename, 'r') as sp:
+        with h5py.File(filename_b, 'r') as sp:
             time = sp['header'].attrs['JD_UTC_FLUXWEIGHTED']
             tval = atime.Time(time, format='jd')
             metadata['dates'] = tval.mjd
@@ -720,14 +721,24 @@ class Spectrum(object):
             metadata['bervs'] = float(sp['header'].attrs['BERV_FLUXWEIGHTED'])
 
             order_zero = 91
-            xs = np.zeros((R, 3954))
-            ys = np.zeros_like(xs)
-            ivars = np.zeros_like(xs)
-            for r in range(R):
-                order = str(order_zero + r)
-                xs[r] = np.array(sp['wavelengths_drift_corrected'][fibername][order])
-                ys[r] = np.array(sp['optimal_extraction'][fibername][order])
-                ivars[r] = 1. / np.array(sp['optimal_var'][fibername][order])
+            order = [str(order_zero + r) for r in range(R)]
+            xs_b = [np.array(sp['wavelengths_drift_corrected'][fibername][order[r]]) for r in range(R)]
+            ys_b = [np.array(sp['optimal_extraction'][fibername][order[r]]) for r in range(R)]
+            ivars_b = [1. / np.array(sp['optimal_var'][fibername][order[r]]) for r in range(R)]
+
+        # now do the red observation
+
+        R = 28
+        with h5py.File(filename_r, 'r') as sp:
+            order_zero = 67
+            order = [str(order_zero + r) for r in range(R)]
+            xs_r = [np.array(sp['wavelengths_drift_corrected'][fibername][order[r]]) for r in range(R)]
+            ys_r = [np.array(sp['optimal_extraction'][fibername][order[r]]) for r in range(R)]
+            ivars_r = [1. / np.array(sp['optimal_var'][fibername][order[r]]) for r in range(R)]
+
+        xs = xs_b + xs_r
+        ys = ys_b + ys_r
+        ivars = ivars_b + ivars_r
 
         self.populate(xs, ys, ivars, **metadata)
         if process:

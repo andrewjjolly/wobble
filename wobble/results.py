@@ -34,6 +34,7 @@ class Results(object):
         a file path pointing to a saved Results object (HDF5 format).
     """
     def __init__(self, data=None, filename=None):
+        self.orders = None
         if (filename is None) & (data is not None):
             assert data is not None, "ERROR: must supply either data or filename keywords."
             for attr in COMMON_ATTRS:
@@ -176,7 +177,7 @@ class Results(object):
                 f.create_dataset(attr, data=getattr(self, attr))  
             self.component_names = [a.decode('utf8') for a in self.component_names] # h5py workaround                  
                 
-    def combine_orders(self, component_name):
+    def combine_orders(self, component_name, orders=None):
         """Calculate and save final time-series RVs for a given component after all 
         orders have been optimized.
         
@@ -184,7 +185,13 @@ class Results(object):
         ----------
         component_name : `str`
             Name of the model component to use.
+        orders : `list`
+            List of orders to be combined
         """
+        if orders is None:
+            self.orders = np.arange(self.R)
+        else:
+            self.orders = orders
         if not np.isin(component_name, self.component_names):
             print("Results: component name {0} not recognized. Valid options are: {1}".format(component_name, 
                     self.component_names))
@@ -192,10 +199,10 @@ class Results(object):
         self.all_rvs = np.asarray(getattr(self, basename+'rvs'))
         self.all_ivars = np.asarray(getattr(self, basename+'ivars_rvs'))
         # initial guess
-        x0_order_rvs = np.median(self.all_rvs, axis=1)
-        x0_time_rvs = np.median(self.all_rvs - np.tile(x0_order_rvs[:,None], (1, self.N)), axis=0)
-        rv_predictions = np.tile(x0_order_rvs[:,None], (1,self.N)) + np.tile(x0_time_rvs, (self.R,1))
-        x0_sigmas = np.log(np.var(self.all_rvs - rv_predictions, axis=1))
+        x0_order_rvs = np.median(self.all_rvs[self.orders], axis=1)
+        x0_time_rvs = np.median(self.all_rvs[self.orders] - np.tile(x0_order_rvs[:,None], (1, self.N)), axis=0)
+        rv_predictions = np.tile(x0_order_rvs[:,None], (1,self.N)) + np.tile(x0_time_rvs, (len(self.orders),1))
+        x0_sigmas = np.log(np.var(self.all_rvs[self.orders] - rv_predictions, axis=1))
         self.M = None
         # optimize
         soln = minimize(self.opposite_lnlike_sigmas, x0_sigmas, method='BFGS')
@@ -218,17 +225,18 @@ class Results(object):
         
     def lnlike_sigmas(self, sigmas, return_rvs = False, restart = False):
         """Internal code used by combine_orders()"""
-        assert len(sigmas) == self.R
+
+        assert len(sigmas) == len(self.orders)
         M = self.get_design_matrix(restart = restart)
         something = np.zeros_like(M[0,:])
-        something[self.N:] = 1. / self.R # last datum will be mean of order velocities is zero
+        something[self.N:] = 1. / len(self.orders) # last datum will be mean of order velocities is zero
         M = np.append(M, something[None, :], axis=0) # last datum
         Rs, Ns = self.get_index_lists()
-        ivars = 1. / ((1. / self.all_ivars) + sigmas[Rs]**2) # not zero-safe
+        ivars = 1. / ((1. / self.all_ivars[self.orders]) + sigmas[Rs]**2) # not zero-safe
         ivars = ivars.flatten()
         ivars = np.append(ivars, 1.) # last datum: MAGIC - implicit units of 1/velocity**2
         MTM = np.dot(M.T, ivars[:, None] * M)
-        ys = self.all_rvs.flatten()
+        ys = self.all_rvs[self.orders].flatten()
         ys = np.append(ys, 0.) # last datum
         MTy = np.dot(M.T, ivars * ys)
         xs = np.linalg.solve(MTM, MTy)
@@ -244,14 +252,14 @@ class Results(object):
 
     def get_index_lists(self):
         """Internal code used by combine_orders()"""
-        return np.mgrid[:self.R, :self.N]
+        return np.mgrid[:len(self.orders), :self.N]
 
     def get_design_matrix(self, restart = False):
         """Internal code used by combine_orders()"""
         if (self.M is None) or restart:
             Rs, Ns = self.get_index_lists()
-            ndata = self.R * self.N
-            self.M = np.zeros((ndata, self.N + self.R)) # note design choices
+            ndata = len(self.orders) * self.N
+            self.M = np.zeros((ndata, self.N + len(self.orders))) # note design choices
             self.M[range(ndata), Ns.flatten()] = 1.
             self.M[range(ndata), self.N + Rs.flatten()] = 1.
             return self.M
