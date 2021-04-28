@@ -43,7 +43,7 @@ setup(
     author="Megan Bedell",
     author_email="mbedell@flatironinstitute.org",
     description="precise radial velocities with tellurics",
-    packages=packages,
+    packages=setuptools.find_packages(),
     ext_modules=extensions,
-    zip_safe=True,
+    zip_safe=True, 
 )
