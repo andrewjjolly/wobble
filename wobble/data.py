@@ -747,3 +747,50 @@ class Spectrum(object):
             self.transform_log()
             self.continuum_normalize()
             self.mask_high_pixels()
+
+    def from_PFS(self, filename, process=True):
+        """
+        Takes a MAROON-X optimally extracted file; reads metadata and associated
+        spectrum + wavelength files.
+        Note: these files must all be located in the same directory.
+        Parameters
+        ----------
+        filename : string
+            Location of the extracted file to be read.
+        process : bool, optional (default `True`)
+            If `True`, do some data processing, including masking of low-SNR
+            regions and strong outliers; continuum normalization; and
+            transformation to ln(wavelength) and ln(flux).
+        """
+        if not self.empty:
+            print("WARNING: overwriting existing contents.")
+        # start with the blue observation
+        R = 69
+
+        metadata = {}
+        metadata['filelist'] = filename
+        # metadata['fiber'] = fiber
+
+        with fits.open(filename) as sp:
+            time = sp[0].header['JD']
+            tval = atime.Time(time, format='jd')
+            metadata['dates'] = tval.mjd
+            metadata['airms'] = sp[0].header['AIRMASS']
+            metadata['bervs'] = sp[0].header['BCORR']*1000
+
+            spec = np.copy(sp[0].data)
+            vars = np.copy(sp[2].data)
+            waves = np.copy(sp[3].data)
+
+        xs = [waves[r] for r in range(R)]
+        ys = [spec[r] for r in range(R)]
+        ivars = [1. / vars[r] for r in range(R)]
+
+
+        self.populate(xs, ys, ivars, **metadata)
+        if process:
+            self.mask_low_pixels()
+            self.mask_bad_edges()
+            self.transform_log()
+            self.continuum_normalize()
+            self.mask_high_pixels()
