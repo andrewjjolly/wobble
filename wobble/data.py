@@ -794,3 +794,57 @@ class Spectrum(object):
             self.transform_log()
             self.continuum_normalize()
             self.mask_high_pixels()
+
+    def from_Veloce(self, filename, process=True, lc=False):
+        """
+        Takes a Veloce optimally extracted file; reads metadata and associated
+        spectrum + wavelength information.
+        Note: these files must all be located in the same directory.
+        Parameters
+        ----------
+        filename : string
+            Location of the extracted file to be read.
+        process : bool, optional (default `True`)
+            If `True`, do some data processing, including masking of low-SNR
+            regions and strong outliers; continuum normalization; and
+            transformation to ln(wavelength) and ln(flux).
+        lc : bool, optional (default `False`)
+            If `True`, read in laser comb spectrum rather than stellar spectrum
+        """
+        if not self.empty:
+            print("WARNING: overwriting existing contents.")
+        R = 40
+
+        metadata = {}
+        metadata['filelist'] = filename
+        # metadata['fiber'] = fiber
+
+        with fits.open(filename) as sp:
+            time = sp[0].header['UTMJD']
+            texp = sp[0].header['EXPOSED']
+            tval = atime.Time(time, format='mjd')
+            dtime = atime.TimeDelta(texp, format='sec')
+            tmid = tval + dtime / 2.0
+            metadata['dates'] = tmid.mjd
+            metadata['airms'] = sp[0].header['AIRMASS']
+            metadata['bervs'] = 0.0*1000
+
+            if lc == True:
+                spec = np.copy(sp[0].data[:,:,27].T)
+                vars = np.copy((sp[2].data[:,:,27].T)**2)
+                waves = np.copy(sp[1].data[:,:,27].T)
+
+        xs = [waves[r] for r in range(R)]
+        ys = [spec[r] for r in range(R)]
+        ivars = [1. / vars[r] for r in range(R)]
+
+
+        self.populate(xs, ys, ivars, **metadata)
+        if process:
+            #if lc == False:
+            self.mask_low_pixels()
+            self.mask_bad_edges()
+            self.transform_log()
+            self.continuum_normalize()
+            if lc == False:
+                self.mask_high_pixels()
