@@ -5,6 +5,10 @@ from itertools import compress
 from astropy.io import fits
 import pandas as pd
 import astropy.time as atime
+from astropy.coordinates import EarthLocation as el
+from astropy.coordinates import SkyCoord
+from astropy.constants import c
+import astropy.units as u
 import h5py
 
 from .utils import fit_continuum
@@ -827,12 +831,28 @@ class Spectrum(object):
             tmid = tval + dtime / 2.0
             metadata['dates'] = tmid.mjd
             metadata['airms'] = sp[0].header['AIRMASS']
-            metadata['bervs'] = 0.0*1000
+            if lc == True:
+                metadata['bervs'] = 0.0*1000
+            if lc == False:
+                telcoords = el.of_site('Siding Spring Observatory')
+                ra = sp[0].header['MEANRA']
+                dec = sp[0].header['MEANDEC']
+                sc = SkyCoord(ra*u.deg, dec*u.deg)
+                vcorr = sc.radial_velocity_correction(kind='barycentric', obstime=tmid, location=telcoords)
+                vcorr = vcorr *(1 - 16.597  * u.km/u.s / c) # JUST FOR TAU CETI
+
+
+                metadata['bervs'] = vcorr.value
 
             if lc == True:
                 spec = np.copy(sp[0].data[:,:,27].T)
                 vars = np.copy((sp[2].data[:,:,27].T)**2)
                 waves = np.copy(sp[1].data[:,:,27].T)
+
+            if lc == False:
+                spec = np.copy(sp[0].data[:,:,13].T)
+                vars = np.copy((sp[2].data[:,:,13].T)**2)
+                waves = np.copy(sp[1].data[:,:,13].T)
 
         xs = [waves[r] for r in range(R)]
         ys = [spec[r] for r in range(R)]
@@ -841,7 +861,6 @@ class Spectrum(object):
 
         self.populate(xs, ys, ivars, **metadata)
         if process:
-            #if lc == False:
             self.mask_low_pixels()
             self.mask_bad_edges()
             self.transform_log()
